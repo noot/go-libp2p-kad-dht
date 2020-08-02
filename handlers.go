@@ -336,6 +336,19 @@ func (dht *IpfsDHT) handleGetProviders(ctx context.Context, p peer.ID, pmes *pb.
 	return resp, nil
 }
 
+type NewProvider struct {
+	key []byte
+	p   peer.ID
+}
+
+func (p *NewProvider) Key() []byte {
+	return p.key
+}
+
+func (p *NewProvider) ID() peer.ID {
+	return p.p
+}
+
 func (dht *IpfsDHT) handleAddProvider(ctx context.Context, p peer.ID, pmes *pb.Message) (_ *pb.Message, _err error) {
 	key := pmes.GetKey()
 	if len(key) > 80 {
@@ -366,6 +379,14 @@ func (dht *IpfsDHT) handleAddProvider(ctx context.Context, p peer.ID, pmes *pb.M
 			dht.peerstore.AddAddrs(pi.ID, pi.Addrs, peerstore.ProviderAddrTTL)
 		}
 		dht.ProviderManager.AddProvider(ctx, key, p)
+
+		select {
+		case dht.newProvs <- &NewProvider{
+			key: key,
+			p:   p,
+		}:
+		case <-ctx.Done():
+		}
 	}
 
 	return nil, nil

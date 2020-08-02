@@ -79,6 +79,8 @@ type IpfsDHT struct {
 	routingTable *kb.RoutingTable // Array of routing tables for differently distanced nodes
 	// ProviderManager stores & manages the provider records for this Dht peer.
 	ProviderManager *providers.ProviderManager
+	// new provider channel
+	newProvs chan *NewProvider
 
 	// manages Routing Table refresh
 	rtRefreshManager *rtrefresh.RtRefreshManager
@@ -165,6 +167,7 @@ func New(ctx context.Context, h host.Host, options ...Option) (*IpfsDHT, error) 
 		return nil, fmt.Errorf("failed to create DHT, err=%s", err)
 	}
 
+	dht.newProvs = make(chan *NewProvider, 256)
 	dht.autoRefresh = cfg.routingTable.autoRefresh
 
 	dht.maxRecordAge = cfg.maxRecordAge
@@ -773,6 +776,10 @@ func (dht *IpfsDHT) Ping(ctx context.Context, p peer.ID) error {
 		return fmt.Errorf("got unexpected response type: %v", resp.Type)
 	}
 	return nil
+}
+
+func (dht *IpfsDHT) NewProviders() <-chan *NewProvider {
+	return dht.newProvs
 }
 
 // newContextWithLocalTags returns a new context.Context with the InstanceID and
