@@ -1,6 +1,7 @@
 package dht
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/libp2p/go-libp2p-core/event"
@@ -56,13 +57,6 @@ func newSubscriberNotifiee(dht *IpfsDHT) (*subscriberNotifee, error) {
 	// register for network notifications
 	dht.host.Network().Notify(nn)
 
-	// Fill routing table with currently connected peers that are DHT servers
-	dht.plk.Lock()
-	defer dht.plk.Unlock()
-	for _, p := range dht.host.Network().Peers() {
-		dht.peerFound(dht.ctx, p, false)
-	}
-
 	return nn, nil
 }
 
@@ -85,7 +79,9 @@ func (nn *subscriberNotifee) subscribe(proc goprocess.Process) {
 				// with our new address to all peers we are connected to. However, we might not necessarily be connected
 				// to our closet peers & so in the true spirit of Zen, searching for ourself in the network really is the best way
 				// to to forge connections with those matter.
-				dht.rtRefreshManager.RefreshNoWait()
+				if dht.autoRefresh || dht.testAddressUpdateProcessing {
+					dht.rtRefreshManager.RefreshNoWait()
+				}
 			case event.EvtPeerProtocolsUpdated:
 				handlePeerChangeEvent(dht, evt.Peer)
 			case event.EvtPeerIdentificationCompleted:
@@ -156,11 +152,21 @@ func (dht *IpfsDHT) validRTPeer(p peer.ID) (bool, error) {
 		return false, err
 	}
 
-	return dht.routingTablePeerFilter == nil || dht.routingTablePeerFilter(dht, dht.Host().Network().ConnsToPeer(p)), nil
+	return dht.routingTablePeerFilter == nil || dht.routingTablePeerFilter(dht, p), nil
+}
+
+type disconnector interface {
+	OnDisconnect(ctx context.Context, p peer.ID)
 }
 
 func (nn *subscriberNotifee) Disconnected(n network.Network, v network.Conn) {
 	dht := nn.dht
+
+	ms, ok := dht.msgSender.(disconnector)
+	if !ok {
+		return
+	}
+
 	select {
 	case <-dht.Process().Closing():
 		return
@@ -178,22 +184,7 @@ func (nn *subscriberNotifee) Disconnected(n network.Network, v network.Conn) {
 		return
 	}
 
-	dht.smlk.Lock()
-	defer dht.smlk.Unlock()
-	ms, ok := dht.strmap[p]
-	if !ok {
-		return
-	}
-	delete(dht.strmap, p)
-
-	// Do this asynchronously as ms.lk can block for a while.
-	go func() {
-		if err := ms.lk.Lock(dht.Context()); err != nil {
-			return
-		}
-		defer ms.lk.Unlock()
-		ms.invalidate()
-	}()
+	ms.OnDisconnect(dht.Context(), p)
 }
 
 func (nn *subscriberNotifee) Connected(network.Network, network.Conn)      {}

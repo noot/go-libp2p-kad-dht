@@ -7,7 +7,7 @@ import (
 
 	"github.com/ipfs/go-cid"
 	u "github.com/ipfs/go-ipfs-util"
-	"github.com/libp2p/go-libp2p-core/network"
+	"github.com/libp2p/go-libp2p-core/host"
 	"github.com/libp2p/go-libp2p-core/peer"
 	peerstore "github.com/libp2p/go-libp2p-core/peerstore"
 	dht "github.com/libp2p/go-libp2p-kad-dht"
@@ -15,6 +15,7 @@ import (
 	record "github.com/libp2p/go-libp2p-record"
 	swarmt "github.com/libp2p/go-libp2p-swarm/testing"
 	bhost "github.com/libp2p/go-libp2p/p2p/host/basic"
+	"github.com/multiformats/go-multiaddr"
 )
 
 var wancid, lancid cid.Cid
@@ -33,9 +34,17 @@ type customRtHelper struct {
 	allow peer.ID
 }
 
-func MkFilterForPeer() (func(d *dht.IpfsDHT, conns []network.Conn) bool, *customRtHelper) {
+func MkFilterForPeer() (func(_ interface{}, p peer.ID) bool, *customRtHelper) {
 	helper := customRtHelper{}
-	f := func(_ *dht.IpfsDHT, conns []network.Conn) bool {
+
+	type hasHost interface {
+		Host() host.Host
+	}
+
+	f := func(dht interface{}, p peer.ID) bool {
+		d := dht.(hasHost)
+		conns := d.Host().Network().ConnsToPeer(p)
+
 		for _, c := range conns {
 			if c.RemotePeer() == helper.allow {
 				return true
@@ -90,7 +99,7 @@ func setupDHT(ctx context.Context, t *testing.T, options ...dht.Option) *DHT {
 	d, err := New(
 		ctx,
 		bhost.New(swarmt.GenSwarm(t, ctx, swarmt.OptDisableReuseport)),
-		append(baseOpts, options...)...,
+		append([]Option{DHTOption(baseOpts...)}, DHTOption(options...))...,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -356,14 +365,20 @@ func TestFindPeer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(p.Addrs) != 1 {
-		t.Fatalf("expeced find peer to find 1 address, found %d", len(p.Addrs))
-	}
+	assertUniqueMultiaddrs(t, p.Addrs)
 	p, err = d.FindPeer(ctx, wan.PeerID())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(p.Addrs) != 1 {
-		t.Fatalf("expeced find peer to find addresses, found %d", len(p.Addrs))
+	assertUniqueMultiaddrs(t, p.Addrs)
+}
+
+func assertUniqueMultiaddrs(t *testing.T, addrs []multiaddr.Multiaddr) {
+	set := make(map[string]bool)
+	for _, addr := range addrs {
+		if set[string(addr.Bytes())] {
+			t.Errorf("duplicate address %s", addr)
+		}
+		set[string(addr.Bytes())] = true
 	}
 }
